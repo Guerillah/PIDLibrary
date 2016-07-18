@@ -2,6 +2,7 @@
 //http://www.arduino.cc/playground/Code/PIDLibrary
 
 using System;
+using System.Threading;
 
 namespace PID
 {
@@ -11,7 +12,7 @@ namespace PID
         private readonly Func<float> _readProcess;
         private readonly Func<float> _readSetPoint;
         private readonly Action<float> _writeOutput;
-        private TimeSpan _computeRate;
+        private Timer _computeTimer;
         private ControllerDirection _controllerDirection;
         private ControllerMode _controllerMode;
         private float _derivativeGain;
@@ -22,17 +23,13 @@ namespace PID
         private float _kp;
         private float _lastError;
         private float _lastInput;
-        private float _outputMaximum;
-        private float _outputMinimum;
         private float _proportionalGain;
+        private TimeSpan _samplingRate;
 
         /// <summary>
-        ///     Instantiates a new PID controller class.
+        ///     Instantiates a new PID controller class. The <see cref="Run" /> method must be called to trigger computation.
         /// </summary>
-        /// <param name="computeRate">
-        ///     The rate at which the <see cref="Compute" /> method is intended to be called via an external
-        ///     timer/thread/etc... important for recalculating internal Kd,Ki,Kp variables when compute rate changes.
-        /// </param>
+        /// <param name="samplingRate"> The rate at which the algorithm will compute a new output./// </param>
         /// <param name="outputMinimum">The minimum value the output can be written to. The output influences the process value.</param>
         /// <param name="outputMaximum">The maximum value the output can be written to. The output influences the process value.</param>
         /// <param name="readProcess">
@@ -48,10 +45,10 @@ namespace PID
         /// <param name="controllerDirection">The direction to control the output if you want the process to increase in value..</param>
         /// <param name="controllerMode">The mode to start out the PID controller in.</param>
         /// <exception cref="ArgumentNullException">
-        ///     Thrown when <see cref="readProcess" /> or <see cref="readOutput" /> or
-        ///     <see cref="writeOutput" /> or <see cref="readSetPoint" /> are null.
+        ///     Thrown when <see cref="readProcess" /> or <see cref="readOutput" /> or <see cref="writeOutput" /> or
+        ///     <see cref="readSetPoint" /> are null.
         /// </exception>
-        public PidController(TimeSpan computeRate, float outputMinimum, float outputMaximum, Func<float> readProcess,
+        public PidController(TimeSpan samplingRate, float outputMinimum, float outputMaximum, Func<float> readProcess,
             Func<float> readOutput,
             Action<float> writeOutput, Func<float> readSetPoint, float proportionalGain, float integralGain,
             float derivativeGain, ControllerDirection controllerDirection, ControllerMode controllerMode)
@@ -65,9 +62,8 @@ namespace PID
             if (writeOutput == null)
                 throw new ArgumentNullException(nameof(writeOutput), "Write output must not be null.");
 
-            ComputeRate = computeRate;
-            OutputMinimum = outputMinimum;
-            OutputMaximum = outputMaximum;
+            SamplingRate = samplingRate;
+            SetOutputLimits(outputMinimum, outputMaximum);
             _readProcess = readProcess;
             _readOutput = readOutput;
             _writeOutput = writeOutput;
@@ -80,79 +76,45 @@ namespace PID
         }
 
         /// <summary>
-        ///     Gets or sets the maximum value the output can be written to.
+        ///     Gets whether the PID controller is currently running/updating.
         /// </summary>
-        /// <exception cref="ArgumentOutOfRangeException">Thrown when value is less than or equal to <see cref="OutputMinimum"/></exception>
-        public float OutputMaximum
-        {
-            get { return _outputMaximum; }
-            set
-            {
-                if (value <= OutputMinimum)
-                    throw new ArgumentOutOfRangeException(nameof(value), value,
-                        "Output maximum must be greater than output minimum.");
-
-                _outputMaximum = value;
-
-                if (ControllerMode == ControllerMode.Manual)
-                    return;
-
-                if (_readOutput() > _outputMaximum)
-                    _writeOutput(_outputMaximum);
-
-                if (_iTerm > _outputMaximum)
-                    _iTerm = _outputMaximum;
-            }
-        }
+        public bool IsRunning { get; private set; }
 
         /// <summary>
-        ///     Gets or sets the minimum value the output can be written to. It must be lower than <see cref="OutputMaximum" />
+        ///     Gets the maximum output value set via the <see cref="SetOutputLimits" /> method.
         /// </summary>
-        /// <exception cref="ArgumentOutOfRangeException">Thrown when value is greater than or equal to <see cref="OutputMaximum"/></exception>
-        public float OutputMinimum
-        {
-            get { return _outputMinimum; }
-            set
-            {
-                if (value >= OutputMaximum)
-                    throw new ArgumentOutOfRangeException(nameof(value), value,
-                        "Output minimum must be less than output maximum.");
-
-                _outputMinimum = value;
-
-                if (ControllerMode == ControllerMode.Manual)
-                    return;
-
-                if (_readOutput() < _outputMinimum)
-                    _writeOutput(_outputMinimum);
-
-                if (_iTerm < _outputMinimum)
-                    _iTerm = _outputMinimum;
-            }
-        }
+        public float OutputMaximum { get; private set; }
 
         /// <summary>
-        ///     Gets or sets the rate at which the <see cref="Compute" /> method should be called via an external
-        ///     timer/thread/etc...
+        ///     Gets the minimum output value set via the <see cref="SetOutputLimits" /> method.
         /// </summary>
-        /// <exception cref="ArgumentOutOfRangeException">Thrown when set to a value less than or equal to 0.</exception>
-        public TimeSpan ComputeRate
+        public float OutputMinimum { get; private set; }
+
+        /// <summary>
+        ///     Gets or sets the rate at which the PID controller will run its algorithm and compute a new output value. If the PID
+        ///     controller is already running, the computation interval will be changed to match this value.
+        /// </summary>
+        public TimeSpan SamplingRate
         {
-            get { return _computeRate; }
+            get { return _samplingRate; }
             set
             {
-                if (value.TotalMilliseconds <= 0)
-                    throw new ArgumentOutOfRangeException(nameof(value), value,
-                        "Sampling rate must be greater than 0 ms.");
-
-                if (value.TotalMilliseconds.Equals(_computeRate.TotalMilliseconds))
+                if (value.TotalMilliseconds.Equals(_samplingRate.TotalMilliseconds))
                     return;
 
-                var samplingRateRatio = value.TotalMilliseconds/_computeRate.TotalMilliseconds;
+                var newSamplingRate = value;
 
-                _computeRate = value;
+                if (newSamplingRate.TotalMilliseconds < 0)
+                    newSamplingRate = TimeSpan.FromMilliseconds(0);
 
-                if (double.IsInfinity(samplingRateRatio))
+                var samplingRateRatio = newSamplingRate.TotalMilliseconds/_samplingRate.TotalMilliseconds;
+
+                _samplingRate = value;
+
+                if (_computeTimer != null)
+                    _computeTimer.Change(TimeSpan.FromMilliseconds(0), _samplingRate);
+
+                if (double.IsInfinity(samplingRateRatio) || double.IsNaN(samplingRateRatio))
                     return;
 
                 _ki *= (float) samplingRateRatio;
@@ -210,17 +172,14 @@ namespace PID
         /// <summary>
         ///     Gets or sets the proportional gain on the PID controller.
         /// </summary>
-        /// <exception cref="ArgumentOutOfRangeException">Thrown when value is set to less than 0.</exception>
         public float ProportionalGain
         {
             get { return _proportionalGain; }
             set
             {
                 if (value < 0)
-                    throw new ArgumentOutOfRangeException(nameof(value), value,
-                        "Proportional gain must greater than or equal to 0.");
+                    _proportionalGain = 0;
 
-                _proportionalGain = value;
                 _kp = _proportionalGain;
 
                 if (ControllerDirection == ControllerDirection.Reverse)
@@ -231,18 +190,15 @@ namespace PID
         /// <summary>
         ///     Gets or sets the integral gain on the PID controller.
         /// </summary>
-        /// <exception cref="ArgumentOutOfRangeException">Thrown when value is set to less than 0.</exception>
         public float IntegralGain
         {
             get { return _integralGain; }
             set
             {
                 if (value < 0)
-                    throw new ArgumentOutOfRangeException(nameof(value), value,
-                        "Integral gain must greater than or equal to 0.");
+                    _integralGain = value;
 
-                _integralGain = value;
-                _ki = _integralGain*(float) ComputeRate.TotalSeconds;
+                _ki = _integralGain*(float) SamplingRate.TotalSeconds;
 
                 if (ControllerDirection == ControllerDirection.Reverse)
                     _ki = 0 - _integralGain;
@@ -252,18 +208,15 @@ namespace PID
         /// <summary>
         ///     Gets or sets the derivative gain on the PID controller.
         /// </summary>
-        /// <exception cref="ArgumentOutOfRangeException">Thrown when value is set to less than 0.</exception>
         public float DerivativeGain
         {
             get { return _derivativeGain; }
             set
             {
                 if (value < 0)
-                    throw new ArgumentOutOfRangeException(nameof(value), value,
-                        "Derivative gain must greater than or equal to 0.");
+                    _derivativeGain = value;
 
-                _derivativeGain = value;
-                _kd = _derivativeGain/(float) ComputeRate.TotalSeconds;
+                _kd = _derivativeGain/(float) SamplingRate.TotalSeconds;
 
                 if (ControllerDirection == ControllerDirection.Reverse)
                     _kd = 0 - _derivativeGain;
@@ -271,10 +224,49 @@ namespace PID
         }
 
         /// <summary>
-        ///     Computes a new output value to drive a process value to a set-point. This method should be called at the rate
-        ///     specified in <see cref="ComputeRate" />
+        ///     Adjusts the minimum and maximum value that the PID controller can drive the output to.
         /// </summary>
-        public void Compute()
+        /// <param name="minimum">The minimum value the output can be driven to.</param>
+        /// <param name="maximum">The maximum value the output can be driven to.</param>
+        public void SetOutputLimits(float minimum, float maximum)
+        {
+            if (minimum > maximum)
+                maximum = minimum;
+
+            OutputMinimum = minimum;
+            OutputMaximum = maximum;
+
+            if (ControllerMode == ControllerMode.Manual)
+                return;
+
+            if (_readOutput() < OutputMinimum)
+                _writeOutput(OutputMinimum);
+            else if (_readOutput() > OutputMaximum)
+                _writeOutput(OutputMaximum);
+
+            if (_iTerm < OutputMinimum)
+                _iTerm = OutputMinimum;
+            else if (_iTerm > OutputMaximum)
+                _iTerm = OutputMaximum;
+        }
+
+        /// <summary>
+        ///     Starts a threaded timer to run the PID controller at the interval specified in <see cref="SamplingRate" />. The
+        ///     output will be driven by the algorithm at the specified interval.
+        /// </summary>
+        public void Run()
+        {
+            if (IsRunning)
+                return;
+
+            IsRunning = true;
+            _computeTimer = new Timer(callback => Compute(), null, TimeSpan.FromMilliseconds(0), SamplingRate);
+        }
+
+        /// <summary>
+        ///     Computes a new output value to drive a process value to a given set-point.
+        /// </summary>
+        private void Compute()
         {
             if (ControllerMode == ControllerMode.Manual) return;
 
@@ -314,10 +306,10 @@ namespace PID
             _iTerm = _readOutput();
             _lastInput = _readProcess();
 
-            if (_iTerm > _outputMaximum)
-                _iTerm = _outputMaximum;
-            else if (_iTerm < _outputMinimum)
-                _iTerm = _outputMinimum;
+            if (_iTerm > OutputMaximum)
+                _iTerm = OutputMaximum;
+            else if (_iTerm < OutputMinimum)
+                _iTerm = OutputMinimum;
         }
     }
 }
