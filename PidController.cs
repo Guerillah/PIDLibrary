@@ -235,7 +235,7 @@ namespace PID
                     throw new ArgumentException("Derivative gain must greater than or equal to 0.", nameof(value));
 
                 _derivativeGain = value;
-                _kd = _derivativeGain * (float)ComputeRate.TotalSeconds;
+                _kd = _derivativeGain / (float)ComputeRate.TotalSeconds;
 
                 if (ControllerDirection == ControllerDirection.Reverse)
                     _kd = 0 - _derivativeGain;
