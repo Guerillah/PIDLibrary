@@ -82,11 +82,16 @@ namespace PID
         /// <summary>
         ///     Gets or sets the maximum value the output can be written to.
         /// </summary>
+        /// <exception cref="ArgumentOutOfRangeException">Thrown when value is less than or equal to <see cref="OutputMinimum"/></exception>
         public float OutputMaximum
         {
             get { return _outputMaximum; }
             set
             {
+                if (value <= OutputMinimum)
+                    throw new ArgumentOutOfRangeException(nameof(value), value,
+                        "Output maximum must be greater than output minimum.");
+
                 _outputMaximum = value;
 
                 if (ControllerMode == ControllerMode.Manual)
@@ -103,13 +108,15 @@ namespace PID
         /// <summary>
         ///     Gets or sets the minimum value the output can be written to. It must be lower than <see cref="OutputMaximum" />
         /// </summary>
+        /// <exception cref="ArgumentOutOfRangeException">Thrown when value is greater than or equal to <see cref="OutputMaximum"/></exception>
         public float OutputMinimum
         {
             get { return _outputMinimum; }
             set
             {
                 if (value >= OutputMaximum)
-                    return;
+                    throw new ArgumentOutOfRangeException(nameof(value), value,
+                        "Output minimum must be less than output maximum.");
 
                 _outputMinimum = value;
 
@@ -128,26 +135,28 @@ namespace PID
         ///     Gets or sets the rate at which the <see cref="Compute" /> method should be called via an external
         ///     timer/thread/etc...
         /// </summary>
+        /// <exception cref="ArgumentOutOfRangeException">Thrown when set to a value less than or equal to 0.</exception>
         public TimeSpan ComputeRate
         {
             get { return _computeRate; }
             set
             {
                 if (value.TotalMilliseconds <= 0)
-                    throw new ArgumentException("Sampling rate must be greater than 0 ms.");
+                    throw new ArgumentOutOfRangeException(nameof(value), value,
+                        "Sampling rate must be greater than 0 ms.");
 
                 if (value.TotalMilliseconds.Equals(_computeRate.TotalMilliseconds))
                     return;
 
-                var samplingRateRatio = value.TotalMilliseconds / _computeRate.TotalMilliseconds;
+                var samplingRateRatio = value.TotalMilliseconds/_computeRate.TotalMilliseconds;
 
                 _computeRate = value;
 
                 if (double.IsInfinity(samplingRateRatio))
                     return;
 
-                _ki *= (float)samplingRateRatio;
-                _kd /= (float)samplingRateRatio;
+                _ki *= (float) samplingRateRatio;
+                _kd /= (float) samplingRateRatio;
             }
         }
 
@@ -164,11 +173,21 @@ namespace PID
                 if (value == _controllerDirection)
                     return;
 
-                _kp = 0 - _kp;
-                _ki = 0 - _ki;
-                _kd = 0 - _kd;
-
                 _controllerDirection = value;
+
+                switch (_controllerDirection)
+                {
+                    case ControllerDirection.Direct:
+                        _kp = Math.Abs(_kp);
+                        _ki = Math.Abs(_ki);
+                        _kd = Math.Abs(_kd);
+                        break;
+                    case ControllerDirection.Reverse:
+                        _kp = Math.Abs(_kp)*-1;
+                        _ki = Math.Abs(_ki)*-1;
+                        _kd = Math.Abs(_kd)*-1;
+                        break;
+                }
             }
         }
 
@@ -191,32 +210,39 @@ namespace PID
         /// <summary>
         ///     Gets or sets the proportional gain on the PID controller.
         /// </summary>
+        /// <exception cref="ArgumentOutOfRangeException">Thrown when value is set to less than 0.</exception>
         public float ProportionalGain
         {
             get { return _proportionalGain; }
             set
             {
                 if (value < 0)
-                    throw new ArgumentException("Proportional gain must greater than or equal to 0.", nameof(value));
+                    throw new ArgumentOutOfRangeException(nameof(value), value,
+                        "Proportional gain must greater than or equal to 0.");
 
                 _proportionalGain = value;
                 _kp = _proportionalGain;
+
+                if (ControllerDirection == ControllerDirection.Reverse)
+                    _kp = 0 - _kp;
             }
         }
 
         /// <summary>
         ///     Gets or sets the integral gain on the PID controller.
         /// </summary>
+        /// <exception cref="ArgumentOutOfRangeException">Thrown when value is set to less than 0.</exception>
         public float IntegralGain
         {
             get { return _integralGain; }
             set
             {
                 if (value < 0)
-                    throw new ArgumentException("Integral gain must greater than or equal to 0.", nameof(value));
+                    throw new ArgumentOutOfRangeException(nameof(value), value,
+                        "Integral gain must greater than or equal to 0.");
 
                 _integralGain = value;
-                _ki = _integralGain * (float)ComputeRate.TotalSeconds;
+                _ki = _integralGain*(float) ComputeRate.TotalSeconds;
 
                 if (ControllerDirection == ControllerDirection.Reverse)
                     _ki = 0 - _integralGain;
@@ -226,16 +252,18 @@ namespace PID
         /// <summary>
         ///     Gets or sets the derivative gain on the PID controller.
         /// </summary>
+        /// <exception cref="ArgumentOutOfRangeException">Thrown when value is set to less than 0.</exception>
         public float DerivativeGain
         {
             get { return _derivativeGain; }
             set
             {
                 if (value < 0)
-                    throw new ArgumentException("Derivative gain must greater than or equal to 0.", nameof(value));
+                    throw new ArgumentOutOfRangeException(nameof(value), value,
+                        "Derivative gain must greater than or equal to 0.");
 
                 _derivativeGain = value;
-                _kd = _derivativeGain / (float)ComputeRate.TotalSeconds;
+                _kd = _derivativeGain/(float) ComputeRate.TotalSeconds;
 
                 if (ControllerDirection == ControllerDirection.Reverse)
                     _kd = 0 - _derivativeGain;
@@ -255,10 +283,10 @@ namespace PID
 
             //Improvement suggested in issue 23
             //https://github.com/br3ttb/Arduino-PID-Library/issues/23
-            _iTerm += _ki * (error + _lastError) / 2.0f;
+            _iTerm += _ki*(error + _lastError)/2.0f;
 
             var dInput = input - _lastInput;
-            var output = _kp * error + _iTerm - _kd * dInput;
+            var output = _kp*error + _iTerm - _kd*dInput;
 
             //Improvement suggested in comment regarding anti windup.
             //http://brettbeauregard.com/blog/2011/04/improving-the-beginner%E2%80%99s-pid-reset-windup/#comment-18721
