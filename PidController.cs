@@ -29,7 +29,10 @@ namespace PID
         /// <summary>
         ///     Instantiates a new PID controller class. The <see cref="Run" /> method must be called to trigger computation.
         /// </summary>
-        /// <param name="samplingRate"> The rate at which the algorithm will compute a new output./// </param>
+        /// <param name="samplingRate">
+        ///     The rate at which the algorithm will compute a new output once <see cref="Run" /> is
+        ///     called.
+        /// </param>
         /// <param name="outputMinimum">The minimum value the output can be written to. The output influences the process value.</param>
         /// <param name="outputMaximum">The maximum value the output can be written to. The output influences the process value.</param>
         /// <param name="readProcess">
@@ -78,17 +81,17 @@ namespace PID
         /// <summary>
         ///     Gets whether the PID controller is currently running/updating.
         /// </summary>
-        public bool IsRunning { get; private set; }
+        public bool IsRunning { get; protected set; }
 
         /// <summary>
         ///     Gets the maximum output value set via the <see cref="SetOutputLimits" /> method.
         /// </summary>
-        public float OutputMaximum { get; private set; }
+        public float OutputMaximum { get; protected set; }
 
         /// <summary>
         ///     Gets the minimum output value set via the <see cref="SetOutputLimits" /> method.
         /// </summary>
-        public float OutputMinimum { get; private set; }
+        public float OutputMinimum { get; protected set; }
 
         /// <summary>
         ///     Gets or sets the rate at which the PID controller will run its algorithm and compute a new output value. If the PID
@@ -254,7 +257,7 @@ namespace PID
         ///     Starts a threaded timer to run the PID controller at the interval specified in <see cref="SamplingRate" />. The
         ///     output will be driven by the algorithm at the specified interval.
         /// </summary>
-        public void Run()
+        public virtual void Run()
         {
             if (IsRunning)
                 return;
@@ -266,7 +269,7 @@ namespace PID
         /// <summary>
         ///     Computes a new output value to drive a process value to a given set-point.
         /// </summary>
-        private void Compute()
+        protected void Compute()
         {
             if (ControllerMode == ControllerMode.Manual) return;
 
@@ -301,7 +304,7 @@ namespace PID
         /// <summary>
         ///     Performs functions to ensure a bumpless transfer from a manual control mode to automatic control mode.
         /// </summary>
-        private void Initialize()
+        protected void Initialize()
         {
             _iTerm = _readOutput();
             _lastInput = _readProcess();
