@@ -180,8 +180,7 @@ namespace PID
             get { return _proportionalGain; }
             set
             {
-                if (value < 0)
-                    _proportionalGain = 0;
+                _proportionalGain = value < 0 ? 0 : value;
 
                 _kp = _proportionalGain;
 
@@ -198,8 +197,7 @@ namespace PID
             get { return _integralGain; }
             set
             {
-                if (value < 0)
-                    _integralGain = value;
+                _integralGain = value < 0 ? 0 : value;
 
                 _ki = _integralGain*(float) SamplingRate.TotalSeconds;
 
@@ -216,8 +214,7 @@ namespace PID
             get { return _derivativeGain; }
             set
             {
-                if (value < 0)
-                    _derivativeGain = value;
+                _derivativeGain = value < 0 ? 0 : value;
 
                 _kd = _derivativeGain/(float) SamplingRate.TotalSeconds;
 
